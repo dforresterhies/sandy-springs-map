@@ -4,17 +4,17 @@
 <meta charset="UTF-8">
 <title>Sandy Springs Family Map</title>
 
-<!-- Leaflet -->
+<!-- Leaflet core -->
 <link rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<!-- Search control -->
+<!-- Leaflet search control -->
 <link rel="stylesheet"
       href="https://unpkg.com/leaflet-control-search@2.9.9/dist/leaflet-search.min.css" />
 <script src="https://unpkg.com/leaflet-control-search@2.9.9/dist/leaflet-search.min.js"></script>
 
-<!-- Papa Parse -->
+<!-- Papa Parse for reading the CSV -->
 <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
 
 <style>
@@ -24,22 +24,11 @@ html,body{height:100%;margin:0}
 .popup-name{font-weight:bold}
 .district-label{font-weight:bold;color:#333;text-shadow:0 0 3px #fff}
 
-/* dropdown */
+/* district dropdown */
 #filterBox{
   position:absolute;top:12px;right:12px;z-index:999;
   background:#fff;padding:4px 6px;border:1px solid #ccc;border-radius:4px;
   font:14px Arial
-}
-
-/* legend */
-#legend{
-  position:absolute;bottom:12px;left:12px;background:#fff;
-  border:1px solid #ccc;border-radius:4px;
-  padding:8px 10px;font:12px/14px Arial;
-  box-shadow:0 1px 4px rgba(0,0,0,.3)
-}
-#legend .swatch{
-  display:inline-block;width:14px;height:14px;margin-right:4px;border:1px solid #999
 }
 
 /* roster panel */
@@ -54,140 +43,179 @@ html,body{height:100%;margin:0}
 .roster-row:hover{background:#f3f3f3}
 .roster-name{font-weight:bold}
 .roster-addr{font-size:12px;color:#555}
+
+/* legend */
+#legend{
+  position:absolute;bottom:12px;left:12px;background:#fff;
+  border:1px solid #ccc;border-radius:4px;
+  padding:8px 10px;font:12px/14px Arial;
+  box-shadow:0 1px 4px rgba(0,0,0,.3)
+}
+#legend .swatch{
+  display:inline-block;width:14px;height:14px;margin-right:4px;border:1px solid #999
+}
 </style>
 </head>
 <body>
 <div id="map"></div>
+
+<!-- District filter dropdown -->
 <select id="filterBox">
   <option value="all">All districts</option>
-  <option value="1">District&nbsp;1</option><option value="2">District&nbsp;2</option>
-  <option value="3">District&nbsp;3</option><option value="4">District&nbsp;4</option>
-  <option value="5">District&nbsp;5</option><option value="6">District&nbsp;6</option>
+  <option value="1">District&nbsp;1</option>
+  <option value="2">District&nbsp;2</option>
+  <option value="3">District&nbsp;3</option>
+  <option value="4">District&nbsp;4</option>
+  <option value="5">District&nbsp;5</option>
+  <option value="6">District&nbsp;6</option>
 </select>
+
+<!-- Roster (auto-fills when a district is chosen) -->
 <div id="roster"></div>
 
 <script>
-// ───────────────── Config
-const DIST_COLORS={
-  1:'#DDAE72',2:'#5AA3E9',3:'#78B478',
-  4:'#9C59D1',5:'#F48B3A',6:'#E3CA55'
+// ───────── Config ───────────────────────────────────────
+const DIST_COLORS = {
+  1:'#DDAE72', 2:'#5AA3E9', 3:'#78B478',
+  4:'#9C59D1', 5:'#F48B3A', 6:'#E3CA55'
 };
 
-// ───────────────── Base map
-const map=L.map('map').setView([33.94,-84.37],12);
+let districtLayer, allMarkers = [], markerGroup;
+const roster   = document.getElementById('roster');
+const dropdown = document.getElementById('filterBox');
+
+// ───────── Base map ─────────────────────────────────────
+const map = L.map('map').setView([33.94,-84.37],12);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
             {attribution:'©OpenStreetMap, ©CARTO'}).addTo(map);
 
-// ───────────────── Load districts
-const DIST_URL='https://gis2.sandyspringsga.gov/arcgis/rest/services/OpenData/General_Reference/MapServer/104/query?where=1=1&outFields=*&outSR=4326&f=geojson';
-
-let districtLayer, allMarkers=[], markerGroup;
-fetch(DIST_URL).then(r=>r.json()).then(dJSON=>{
-  districtLayer=L.geoJSON(dJSON,{
-    style:f=>{
-      const c=DIST_COLORS[f.properties.DISTRICT]||'#666';
-      return {color:c,weight:1,fillColor:c,fillOpacity:.25};
-    },
-    onEachFeature:(f,l)=>{
-      const c=l.getBounds().getCenter();
-      L.marker(c,{
-        icon:L.divIcon({className:'district-label',
-                        html:`District ${f.properties.DISTRICT}`}),
-        interactive:false
+// ───────── Load council-district polygons ───────────────
+fetch('https://gis2.sandyspringsga.gov/arcgis/rest/services/OpenData/General_Reference/MapServer/104/query?where=1=1&outFields=*&outSR=4326&f=geojson')
+  .then(r => r.json())
+  .then(dJSON => {
+      districtLayer = L.geoJSON(dJSON, {
+        style: f => {
+          const c = DIST_COLORS[f.properties.DISTRICT] || '#666';
+          return {color:c, weight:1, fillColor:c, fillOpacity:.25};
+        },
+        onEachFeature: (f,l) => {
+          const c = l.getBounds().getCenter();
+          L.marker(c,{icon:L.divIcon({
+              className:'district-label',
+              html:`District ${f.properties.DISTRICT}`}),
+            interactive:false}).addTo(map);
+        }
       }).addTo(map);
-    }
-  }).addTo(map);
 
-  // then families
-  Papa.parse('families.csv',{
-    header:true,download:true,dynamicTyping:true,
-    complete: res=>buildMarkers(res.data,dJSON)
+      // now load family CSV
+      Papa.parse('families.csv', {
+        header:true, download:true, dynamicTyping:true,
+        complete: res => buildMarkers(res.data, dJSON)
+      });
   });
-});
 
-// ───────── point-in-polygon helper
-function inFeat(x,y,ft){
-  const rings=ft.geometry.type==='Polygon'
-        ?[ft.geometry.coordinates[0]]
-        :ft.geometry.coordinates.map(p=>p[0]);
-  let inside=false;
+// ───────── Point-in-polygon (ray-casting) ───────────────
+function inside(x,y,ft){
+  const rings = ft.geometry.type==='Polygon'
+        ? [ft.geometry.coordinates[0]]
+        : ft.geometry.coordinates.map(p=>p[0]);
+  let ok=false;
   rings.forEach(vs=>{
     for(let i=0,j=vs.length-1;i<vs.length;j=i++){
       const [xi,yi]=vs[i], [xj,yj]=vs[j];
-      const intersect=((yi>y)!=(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi);
-      if(intersect) inside=!inside;
+      const hit=((yi>y)!=(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi);
+      if(hit) ok=!ok;
     }
   });
-  return inside;
+  return ok;
 }
 
-// ───────── build markers
+// ───────── Build markers & search ───────────────────────
 function buildMarkers(rows,dJSON){
-  rows.forEach((r,idx)=>{
-    const lat=+r.Lat, lon=+r.Lon; if(!lat||!lon) return;
-    const ft=dJSON.features.find(f=>inFeat(lon,lat,f));
-    const dist=ft?ft.properties.DISTRICT:'?';
-    const clr=DIST_COLORS[dist]||'#999';
+  rows.forEach(r=>{
+    const lat=+r.Lat, lon=+r.Lon;
+    if(!lat||!lon) return;
 
-    const m=L.circleMarker([lat,lon],{
-      radius:6,weight:1,color:'#333',fillColor:clr,fillOpacity:.9
-    }).bindPopup(`<div class="popup-name">${r['All_Names']||'n/a'}</div>
-                  District ${dist}<br>${r['Full Address']||''}`);
+    const ft   = dJSON.features.find(f=>inside(lon,lat,f));
+    const dist = ft ? String(ft.properties.DISTRICT) : '?';
+    const clr  = DIST_COLORS[dist] || '#999';
 
-    m._dist=String(dist);          // for filter
-    m._row ={name:r['All_Names'],addr:r['Full Address']}; // for roster
+    const m = L.circleMarker([lat,lon], {
+      radius:6, weight:1, color:'#333',
+      fillColor:clr, fillOpacity:.9
+    }).bindPopup(`
+      <div class="popup-name">${r['All_Names']||'n/a'}</div>
+      District ${dist}<br>${r['Full Address']||''}`);
+
+    m._dist = dist;                             // for filtering
+    m._row  = {name:r['All_Names'], addr:r['Full Address']}; // for roster/search
     allMarkers.push(m);
   });
 
-  markerGroup=L.layerGroup(allMarkers).addTo(map);
-  setupSearch(); setupFilter();
-}
+  markerGroup = L.layerGroup(allMarkers).addTo(map);
 
-// ───────── search box
-function setupSearch(){
+  // search box
   new L.Control.Search({
-    layer:markerGroup,propertyName:'_row.name',
-    marker:false,moveToLocation:(latlng,z)=>map.setView(latlng,Math.max(16,z))
+    layer: markerGroup,
+    propertyName: '_row.name',
+    marker:false,
+    moveToLocation:(latlng,z)=>map.setView(latlng,Math.max(16,z))
   }).addTo(map);
+
+  applyFilter();                  // populate roster immediately
 }
 
-// ───────── filter + roster
-function setupFilter(){
-  const dd=document.getElementById('filterBox');
-  const roster=document.getElementById('roster');
+// ───────── Apply filter & update roster ─────────────────
+function applyFilter(){
+  const val = dropdown.value;   // 'all' or '1'..'6'
+  if(!markerGroup) return;      // markers not ready yet
 
-  dd.onchange=e=>{
-    const val=e.target.value;            // 'all' or '1'..'6'
-    markerGroup.clearLayers();
-    districtLayer.eachLayer(l=>{
-      l.setStyle({fillOpacity:(val==='all'||String(l.feature.properties.DISTRICT)===val)?0.25:0.03});
-    });
-    const subset= val==='all' ? allMarkers
-                 : allMarkers.filter(m=>m._dist===val);
-    subset.forEach(m=>markerGroup.addLayer(m));
+  markerGroup.clearLayers();
 
-    // ---- build roster
-    if(val==='all'){ roster.style.display='none'; roster.innerHTML=''; return; }
-    roster.style.display='block';
-    roster.innerHTML=`<h3>District ${val} (${subset.length})</h3>`;
-    subset.map(m=>m._row).sort((a,b)=>a.addr.localeCompare(b.addr))
-          .forEach(row=>{
-      const div=document.createElement('div');
-      div.className='roster-row';
-      div.innerHTML=`<span class="roster-name">${row.name}</span><br>
-                     <span class="roster-addr">${row.addr}</span>`;
-      div.onclick=()=>{         // zoom to marker
-        const match= subset.find(m=>m._row.addr===row.addr&&m._row.name===row.name);
-        if(match){ map.setView(match.getLatLng(),16); match.openPopup(); }
-      };
-      roster.appendChild(div);
-    });
-  };
+  // fade polygons
+  districtLayer.eachLayer(l=>{
+    l.setStyle({fillOpacity:
+      (val==='all'||String(l.feature.properties.DISTRICT)===val)?0.25:0.03});
+  });
+
+  // subset markers
+  const subset = val==='all'
+      ? allMarkers
+      : allMarkers.filter(m=>m._dist===val);
+
+  subset.forEach(m=>markerGroup.addLayer(m));
+
+  // build roster
+  if(val==='all'){
+    roster.style.display='none';
+    roster.innerHTML='';
+    return;
+  }
+  roster.style.display='block';
+  roster.innerHTML=`<h3>District ${val} (${subset.length})</h3>`;
+
+  subset.map(m=>m._row)
+        .sort((a,b)=>a.addr.localeCompare(b.addr))
+        .forEach(row=>{
+    const div=document.createElement('div');
+    div.className='roster-row';
+    div.innerHTML=`<span class="roster-name">${row.name}</span><br>
+                   <span class="roster-addr">${row.addr}</span>`;
+    div.onclick=()=>{
+      const match=subset.find(m=>m._row.addr===row.addr&&m._row.name===row.name);
+      if(match){ map.setView(match.getLatLng(),16); match.openPopup(); }
+    };
+    roster.appendChild(div);
+  });
 }
 
-// ───────── legend
+// initial listener (works even if markers load later)
+dropdown.onchange = applyFilter;
+
+// ───────── Legend ───────────────────────────────────────
 const lg=document.createElement('div');
-lg.id='legend'; lg.innerHTML='<b>District colours</b><br>';
+lg.id='legend';
+lg.innerHTML='<b>District colours</b><br>';
 Object.keys(DIST_COLORS).forEach(d=>{
   lg.innerHTML+=`<span class="swatch" style="background:${DIST_COLORS[d]}"></span>${d}&nbsp; `;
 });
@@ -195,3 +223,4 @@ document.body.appendChild(lg);
 </script>
 </body>
 </html>
+
