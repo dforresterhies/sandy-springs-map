@@ -4,17 +4,17 @@
 <meta charset="UTF-8">
 <title>Sandy Springs Family Map</title>
 
-<!-- 1️⃣  Leaflet core: CSS + JS  (unchanged, straight quotes) -->
+<!-- Leaflet core -->
 <link rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<!-- 2️⃣  Leaflet-Search control -->
+<!-- Leaflet-Search control -->
 <link rel="stylesheet"
       href="https://unpkg.com/leaflet-control-search@2.9.9/dist/leaflet-search.min.css" />
 <script src="https://unpkg.com/leaflet-control-search@2.9.9/dist/leaflet-search.min.js"></script>
 
-<!-- 3️⃣  Papa Parse for loading the CSV -->
+<!-- Papa Parse -->
 <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
 
 <style>
@@ -62,51 +62,55 @@ html,body{height:100%;margin:0}
 <!-- District filter -->
 <select id="filterBox">
   <option value="all">All districts</option>
-  <option value="1">District&nbsp;1</option>
-  <option value="2">District&nbsp;2</option>
-  <option value="3">District&nbsp;3</option>
-  <option value="4">District&nbsp;4</option>
-  <option value="5">District&nbsp;5</option>
-  <option value="6">District&nbsp;6</option>
+  <option value="1">District 1</option>
+  <option value="2">District 2</option>
+  <option value="3">District 3</option>
+  <option value="4">District 4</option>
+  <option value="5">District 5</option>
+  <option value="6">District 6</option>
 </select>
 
 <!-- Roster -->
 <div id="roster"></div>
 
 <script>
-// ───────── Config
-const DIST_COLORS={
-  1:'#DDAE72',2:'#5AA3E9',3:'#78B478',
-  4:'#9C59D1',5:'#F48B3A',6:'#E3CA55'
+// ───── Config
+const DIST_COLORS = {
+  1:'#DDAE72', 2:'#5AA3E9', 3:'#78B478',
+  4:'#9C59D1', 5:'#F48B3A', 6:'#E3CA55'
 };
 let districtLayer, allMarkers=[], markerGroup;
-const roster=document.getElementById('roster');
-const dropdown=document.getElementById('filterBox');
+const roster   = document.getElementById('roster');
+const dropdown = document.getElementById('filterBox');
 
-// ───────── Base map
-const map=L.map('map').setView([33.94,-84.37],12);
+// ───── Base map
+const map = L.map('map').setView([33.94,-84.37],12);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-  {attribution:'©OpenStreetMap, ©CARTO'}).addTo(map);
+            {attribution:'©OpenStreetMap, ©CARTO'}).addTo(map);
 
-// ───────── District polygons
+// ───── District polygons
 fetch('https://gis2.sandyspringsga.gov/arcgis/rest/services/OpenData/General_Reference/MapServer/104/query?where=1=1&outFields=*&outSR=4326&f=geojson')
-.then(r=>r.json()).then(dJSON=>{
-  districtLayer=L.geoJSON(dJSON,{
-    style:f=>{
-      const c=DIST_COLORS[f.properties.DISTRICT]||'#666';
-      return {color:c,weight:1,fillColor:c,fillOpacity:.25};
-    },
-    onEachFeature:(f,l)=>{
-      const c=l.getBounds().getCenter();
-      L.marker(c,{icon:L.divIcon({className:'district-label',
-        html:`District ${f.properties.DISTRICT}`}),interactive:false}).addTo(map);
-    }}).addTo(map);
+  .then(r=>r.json())
+  .then(dJSON=>{
+    districtLayer=L.geoJSON(dJSON,{
+      style:f=>{
+        const c=DIST_COLORS[f.properties.DISTRICT]||'#666';
+        return {color:c,weight:1,fillColor:c,fillOpacity:.25};
+      },
+      onEachFeature:(f,l)=>{
+        const c=l.getBounds().getCenter();
+        L.marker(c,{icon:L.divIcon({className:'district-label',
+          html:`District ${f.properties.DISTRICT}`}),interactive:false}).addTo(map);
+      }
+    }).addTo(map);
 
-  Papa.parse('families.csv',{header:true,download:true,dynamicTyping:true,
-    complete: res=>buildMarkers(res.data,dJSON)});
-});
+    Papa.parse('families.csv',{
+      header:true,download:true,dynamicTyping:true,
+      complete: res=>buildMarkers(res.data,dJSON)
+    });
+  });
 
-// ───────── Helper: point-in-polygon
+// point-in-polygon helper
 function inside(x,y,ft){
   const rings=ft.geometry.type==='Polygon'
         ?[ft.geometry.coordinates[0]]
@@ -121,7 +125,7 @@ function inside(x,y,ft){
   return ok;
 }
 
-// ───────── Make markers
+// make markers + search
 function buildMarkers(rows,dJSON){
   rows.forEach(r=>{
     const lat=+r.Lat, lon=+r.Lon; if(!lat||!lon) return;
@@ -132,7 +136,7 @@ function buildMarkers(rows,dJSON){
     const m=L.circleMarker([lat,lon],{
       radius:6,weight:1,color:'#333',
       fillColor:clr,fillOpacity:.9,
-      title:r['All_Names']||'n/a'           // searchable text
+      title:r['All_Names']||'n/a'         // searchable field
     }).bindPopup(`<div class="popup-name">${r['All_Names']||'n/a'}</div>
                   District ${dist}<br>${r['Full Address']||''}`);
 
@@ -143,16 +147,20 @@ function buildMarkers(rows,dJSON){
 
   markerGroup=L.layerGroup(allMarkers).addTo(map);
 
-  // Search box
+  // search box (always visible)
   new L.Control.Search({
-    layer:markerGroup,marker:false,
+    layer: markerGroup,
+    marker:false,
+    initial:true,
+    autoCollapse:false,
+    textPlaceholder:'Search family…',
     moveToLocation:(latlng,z)=>map.setView(latlng,Math.max(16,z))
   }).addTo(map);
 
-  applyFilter(); // fill roster once
+  applyFilter();               // populate roster initially
 }
 
-// ───────── Filter + roster
+// filter + roster
 function applyFilter(){
   const val=dropdown.value;
   if(!markerGroup) return;
@@ -181,10 +189,10 @@ function applyFilter(){
     roster.appendChild(div);
   });
 }
-// early listener
+// dropdown listener
 dropdown.onchange=applyFilter;
 
-// ───────── Legend
+// legend
 const lg=document.createElement('div');
 lg.id='legend';lg.innerHTML='<b>District colours</b><br>';
 Object.keys(DIST_COLORS).forEach(d=>{
