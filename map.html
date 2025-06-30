@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sandy Springs Family Map</title>
+
+<!-- Leaflet & helpers -->
+<link rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+<style>
+html,body,#map{height:100%;margin:0}
+.popup-name{font-weight:bold}
+.district-label{font-weight:bold;color:#333;text-shadow:0 0 3px #fff}
+#legend{
+  position:absolute;bottom:12px;left:12px;
+  background:#fff;border:1px solid #ccc;border-radius:4px;
+  padding:8px 10px;font:12px/14px Arial;box-shadow:0 1px 4px rgba(0,0,0,.3);
+}
+#legend span.swatch{
+  display:inline-block;width:14px;height:14px;margin-right:4px;border:1px solid #999;
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<!-- ------- JavaScript ------- -->
+<script>
+// 0️⃣  District->color lookup  (hex values sampled from the city PDF)
+const DIST_COLORS = {
+  1:'#DDAE72', // tan-gold
+  2:'#5AA3E9', // sky blue
+  3:'#78B478', // sage green
+  4:'#9C59D1', // plum purple
+  5:'#F48B3A', // burnt orange
+  6:'#E3CA55'  // straw yellow
+};
+
+// 1️⃣  Base map
+const map = L.map('map').setView([33.94,-84.37],12);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            {attribution:'©OpenStreetMap, ©CARTO'}).addTo(map);
+
+// 2️⃣  Load council-district polygons
+const DIST_URL =
+ 'https://gis2.sandyspringsga.gov/arcgis/rest/services/OpenData/General_Reference/MapServer/104/query?where=1=1&outFields=*&outSR=4326&f=geojson';
+
+fetch(DIST_URL).then(r=>r.json()).then(districtsJSON=>{
+
+  // 2A.  Draw districts, color-matched
+  L.geoJSON(districtsJSON,{
+    style:f=>{
+      const c=DIST_COLORS[f.properties.DISTRICT]||'#666';
+      return {color:c,weight:1,fillColor:c,fillOpacity:.25};
+    },
+    onEachFeature:(f,layer)=>{
+      // add a subtle label at district center
+      const c=layer.getBounds().getCenter();
+      L.marker(c,{icon:L.divIcon({className:'district-label',
+                   html:`District ${f.properties.DISTRICT}`}),
+                 interactive:false}).addTo(map);
+    }
+  }).addTo(map);
+
+  // 3️⃣  Load the family CSV
+  Papa.parse('sandy springs - Sheet2.csv',{
+    header:true,download:true,dynamicTyping:true,
+    complete: res=>addFamilies(res.data,districtsJSON)
+  });
+});
+
+// 4️⃣  Point-in-polygon test (supports Polygon & MultiPolygon)
+function pointInFeature(x,y,feature){
+  const rings = feature.geometry.type==='Polygon'
+        ? [feature.geometry.coordinates[0]]
+        : feature.geometry.coordinates.map(p=>p[0]);
+  let inside=false;
+  rings.forEach(vs=>{
+    for(let i=0,j=vs.length-1;i<vs.length;j=i++){
+      const xi=vs[i][0], yi=vs[i][1], xj=vs[j][0], yj=vs[j][1];
+      const intersect=((yi>y)!=(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi);
+      if(intersect) inside=!inside;
+    }
+  });
+  return inside;
+}
+
+// 5️⃣  Drop markers colored by district
+function addFamilies(rows,districtsJSON){
+  rows.forEach(r=>{
+    const lat=Number(r.Lat), lon=Number(r.Lon);
+    if(!lat||!lon) return;   // skip blanks
+
+    // find district
+    const feat=districtsJSON.features.find(f=>pointInFeature(lon,lat,f));
+    const dist=feat?feat.properties.DISTRICT:'?';
+    const color=DIST_COLORS[dist]||'#999';
+
+    L.circleMarker([lat,lon],{
+      radius:6,weight:1,color:'#333',fillColor:color,fillOpacity:.9
+    })
+     .addTo(map)
+     .bindPopup(`<div class="popup-name">${r.All_Names||r.NAME}</div>
+                 District ${dist}<br>${r.Address||''}<br>${r.City||''}`);
+  });
+}
+
+// 6️⃣  Simple legend
+const lg=document.createElement('div');
+lg.id='legend';
+lg.innerHTML='<b>District Colors</b><br>';
+Object.keys(DIST_COLORS).forEach(d=>{
+  lg.innerHTML+=`<span class="swatch" style="background:${DIST_COLORS[d]}"></span>${d}&nbsp; `;
+});
+document.body.appendChild(lg);
+</script>
+</body>
+</html>
