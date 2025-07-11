@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Sandy Springs Family Map</title>
+
+<!-- Leaflet core (straight quotes, no smart quotes) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<!-- Leaflet-Search -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet-control-search@2.9.9/dist/leaflet-search.min.css" />
+<script src="https://unpkg.com/leaflet-control-search@2.9.9/dist/leaflet-search.min.js"></script>
+
+<!-- Papa Parse -->
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+<style>
+html,body{height:100%;margin:0}
+#map{height:100%}
+
+.popup-name{font-weight:bold}
+.district-label{font-weight:bold;color:#333;text-shadow:0 0 3px #fff}
+
+#filterBox{
+  position:absolute;top:12px;right:12px;z-index:999;
+  background:#fff;padding:4px 6px;border:1px solid #ccc;border-radius:4px;
+  font:14px Arial
+}
+#roster{
+  position:absolute;top:54px;right:12px;bottom:12px;z-index:998;
+  width:260px;overflow:auto;background:#fff;
+  border:1px solid #ccc;border-radius:4px;
+  font:13px/18px Arial;padding:8px;display:none;
+}
+#roster h3{margin:4px 0 6px;font-size:15px}
+.roster-row{cursor:pointer;padding:2px 0;border-bottom:1px solid #eee}
+.roster-row:hover{background:#f3f3f3}
+.roster-name{font-weight:bold}
+.roster-addr{font-size:12px;color:#555}
+
+#legend{
+  position:absolute;bottom:12px;left:12px;z-index:997;
+  background:#fff;border:1px solid #ccc;border-radius:4px;
+  padding:8px 10px;font:12px/14px Arial;
+  box-shadow:0 1px 4px rgba(0,0,0,.3)
+}
+#legend .swatch{
+  display:inline-block;width:14px;height:14px;margin-right:4px;border:1px solid #999
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<select id="filterBox">
+  <option value="all">All districts</option>
+  <option value="1">District 1</option><option value="2">District 2</option>
+  <option value="3">District 3</option><option value="4">District 4</option>
+  <option value="5">District 5</option><option value="6">District 6</option>
+</select>
+
+<div id="roster"></div>
+
+<script>
+// ───── Config
+const DIST_COLORS={
+  1:'#DDAE72',2:'#5AA3E9',3:'#78B478',
+  4:'#9C59D1',5:'#F48B3A',6:'#E3CA55'
+};
+let districtLayer, allMarkers=[], markerGroup;
+const roster   = document.getElementById('roster');
+const dropdown = document.getElementById('filterBox');
+
+// ───── Base map
+const map=L.map('map').setView([33.94,-84.37],12);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            {attribution:'©OpenStreetMap, ©CARTO'}).addTo(map);
+
+// ───── District polygons
+fetch('https://gis2.sandyspringsga.gov/arcgis/rest/services/OpenData/General_Reference/MapServer/104/query?where=1=1&outFields=*&outSR=4326&f=geojson')
+.then(r=>r.json()).then(dJSON=>{
+  districtLayer=L.geoJSON(dJSON,{
+    style:f=>{
+      const c=DIST_COLORS[f.properties.DISTRICT]||'#666';
+      return {color:c,weight:1,fillColor:c,fillOpacity:.25};
+    },
+    onEachFeature:(f,l)=>{
+      const c=l.getBounds().getCenter();
+      L.marker(c,{icon:L.divIcon({className:'district-label',
+        html:`District ${f.properties.DISTRICT}`}),interactive:false}).addTo(map);}
+  }).addTo(map);
+
+  Papa.parse('families.csv',{
+    header:true,download:true,dynamicTyping:true,
+    complete: res=>buildMarkers(res.data,dJSON)});
+});
+
+// point-in-polygon
+function inside(x,y,ft){
+  const rings=ft.geometry.type==='Polygon'
+        ?[ft.geometry.coordinates[0]]
+        :ft.geometry.coordinates.map(p=>p[0]);
+  let ok=false;
+  rings.forEach(vs=>{
+    for(let i=0,j=vs.length-1;i<vs.length;j=i++){
+      const [xi,yi]=vs[i],[xj,yj]=vs[j];
+      const hit=((yi>y)!=(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi);
+      if(hit) ok=!ok;}});
+  return ok;
+}
+
+// build markers + search
+function buildMarkers(rows,dJSON){
+  rows.forEach(r=>{
+    const lat=+r.Lat, lon=+r.Lon; if(!lat||!lon) return;
+    const ft=dJSON.features.find(f=>inside(lon,lat,f));
+    const dist=ft?String(ft.properties.DISTRICT):'?';
+    const clr=DIST_COLORS[dist]||'#999';
+
+    const m=L.circleMarker([lat,lon],{
+      radius:6,weight:1,color:'#333',fillColor:clr,fillOpacity:.9,
+      title:r['All_Names']||'n/a'          // searchable text
+    }).bindPopup(`<div class="popup-name">${r['All_Names']||'n/a'}</div>
+                  District ${dist}<br>${r['Full Address']||''}`);
+
+    m._dist=dist;
+    m._row ={name:r['All_Names'],addr:r['Full Address']};
+    allMarkers.push(m);
+  });
+
+  markerGroup=L.layerGroup(allMarkers).addTo(map);
+
+  new L.Control.Search({
+    layer:markerGroup,
+    marker:false,
+    initial:false,          // keep field open
+    autoCollapse:false,
+    textPlaceholder:'Search family…',
+    moveToLocation:(latlng,z)=>map.setView(latlng,Math.max(16,z))
+  }).addTo(map);
+
+  applyFilter();            // build roster now
+}
+
+// filter + roster + hover-highlight
+function applyFilter(){
+  const val=dropdown.value;
+  if(!markerGroup) return;
+  markerGroup.clearLayers();
+
+  districtLayer.eachLayer(l=>{
+    l.setStyle({fillOpacity:
+      (val==='all'||String(l.feature.properties.DISTRICT)===val)?0.25:0.03});
+  });
+
+  const subset=val==='all'?allMarkers:allMarkers.filter(m=>m._dist===val);
+  subset.forEach(m=>markerGroup.addLayer(m));
+
+  if(val==='all'){roster.style.display='none';roster.innerHTML='';return;}
+  roster.style.display='block';
+  roster.innerHTML=`<h3>District ${val} (${subset.length})</h3>`;
+  subset.map(m=>m._row).sort((a,b)=>a.addr.localeCompare(b.addr))
+        .forEach(row=>{
+    const div=document.createElement('div');
+    div.className='roster-row';
+    div.innerHTML=`<span class="roster-name">${row.name}</span><br>
+                   <span class="roster-addr">${row.addr}</span>`;
+
+    // link roster row → marker
+    const match=subset.find(m=>m._row.addr===row.addr&&m._row.name===row.name);
+
+    div.onclick=()=>{ map.setView(match.getLatLng(),16); match.openPopup(); };
+
+    // highlight pin on hover
+    div.onmouseenter=()=>{
+      if(!match) return;
+      match.setStyle({radius:10,fillOpacity:1});
+      match._highlightTimer=setTimeout(()=>match.setStyle({radius:6,fillOpacity:.9}),2000);
+    };
+    div.onmouseleave=()=>{
+      if(match){clearTimeout(match._highlightTimer);
+                match.setStyle({radius:6,fillOpacity:.9});}
+    };
+
+    roster.appendChild(div);
+  });
+}
+dropdown.onchange=applyFilter;
+
+// legend
+const lg=document.createElement('div');
+lg.id='legend';lg.innerHTML='<b>District colours</b><br>';
+Object.keys(DIST_COLORS).forEach(d=>{
+  lg.innerHTML+=`<span class="swatch" style="background:${DIST_COLORS[d]}"></span>${d}&nbsp; `;
+});
+document.body.appendChild(lg);
+</script>
+</body>
+</html>
